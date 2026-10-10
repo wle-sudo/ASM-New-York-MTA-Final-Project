@@ -1,0 +1,620 @@
+---
+title: "Stand Clear of the Closing Doors, Please: Determinants of New York City Subway Punctuality"
+author: "Winston Le, ClassPartner"
+format:
+  pdf:
+    fontsize: 11pt
+    geometry: margin = 1in
+    mainfont: "Latin Modern Roman"
+    sansfont: "Latin Modern Roman"
+editor: visual
+execute:
+  include: false
+  echo: false
+  eval: true
+  warning: false
+  message: false
+---
+
+# Abstract
+
+What is the relationship between the punctuality of New York City (NYC) subway trains and the characteristics of serviced lines and neighborhoods? Previous work has focused on the reliability of public transit systems, while other work has found inequities in transit access for various disadvantaged populations. Using 2024 data on 20 subway lines from the NY Metropolitan Transportation Authority and US Census Bureau, we investigated how NYC subway lateness is related to various technical and demographic predictors. The technical predictors relate to the route lengths and heterogeneity associated with different lines, while our demographic predictors relate to the average income and non-white proportion of the people lines serve. Using likelihood ratio tests and logistic regression, we found the following: first, line income and race are significant predictors of lateness at the $\alpha = 0.05$ level; and second, lateness is significantly related to the technical and demographic predictors, some in non-linear ways. Trains are less likely to be late on the weekend vs. the weekday, and an increase in the average extent of a train's route by one mile increases the odds of being late by $1.0433$. Relative to lines that employ just one kind of vehicle, trains that employ two and three have lower and higher odds of being late respectively. Train age and line income follow positive linear and quadratic relationships with lateness, while non-white proportion is associated with higher odds of lateness and interacts significantly with income.
+
+# Introduction
+
+The New York Metropolitan Transportation Authority's (MTA) subway system sees considerable usage: in 2024, $1{,}194{,}866{,}357$ total New Yorkers rode the subway \cite{subway_ridership}. New Yorkers use the subway to travel for work, school, and leisure. Despite the subway's importance, its punctuality is often criticized, and not equally by all New Yorkers. In 2017, the New York City (NYC) Comptroller's office found in a survey that $54\%$ of respondents in the lower-income and heavily Hispanic Bronx experienced significant delays "more than half the time" or "always" compared to just $25\%$ of Manhattan respondents \cite{human_cost}. The costs of these delays are also unevenly distributed. The 2017 report also found that, in neighborhoods where the average income was below the $\$62{,}150$ threshold for a three-person household, $24\%$ of respondents were reprimanded at work due to delays compared to just $10\%$ of respondents in neighborhoods above the income threshold.
+
+Previous literature has focused on different aspects of other transit systems. One author inspecting buses in Western Massachusetts found a negative correlation between ridership and bus reliability, and an increase in reliability on the weekends \cite{bus_paper}. Others analyzing French rail services find that heterogeneity in the vehicles use reduces cost-efficiency by increasing maintenance costs \cite{french_paper}. And, one team of researchers find significant variations in subway access across the boroughs of New York, with Queens' non-Hispanic Black community in particular facing pronounced difficulties in access \cite{spatial_paper}. However, little work has been done to connect the theme of transit reliability to the diversity in income and race that characterizes New York's community. This paper thus seeks to examine the relationship between the punctuality of NYC subway trains and the characteristics of serviced lines and neighborhoods.
+
+# Methods
+
+The data in this analysis was obtained from the MTA, the US Census Bureau, and Wikipedia for the year 2024. Data on line punctuality, weekend/weekday status, and the average lengths of line routes were sourced from the MTA's Open Data Catalog; data on borough (Bronx, Manhattan, Brooklyn, and Queens) average income and the proportion of residents that are non-white was sourced from the US Census Bureau; and data on the count of distinct locomotives that lines use, as well as their average ages and age ranges (maximum minus the minimum, for a given line) were sourced from Wikipedia. In total, the data contains $2{,}424{,}200$ observations for $20$ distinct train lines, with shuttle service excluded from the analysis. Each row represents an observation where the outcome variable is binary and indicates lateness for some line, while each column represents a predictor.
+
+A train's punctuality, defined by the MTA as "on-time performance", refers to whether a train on a given line arrives at their station within five minutes of the scheduled arrival time. Hereafter, the metric of interest is subway lateness, or whether a train does not arrive at a station within five minutes of the scheduled arrival time. The predictors considered were weekend status, as a binary variable; the count of locomotives used on a given line, as a categorical variable; the vehicle average age and age range, in years; the average maximum extent of a line's routes, in miles; and the station-weighted average income and non-white proportion for a given line, in thousands of dollars. The vehicle average age, age range, average route length, and income were included as continuous variables, while non-white proportion was organized into quartiles and included as a categorical variable.
+
+We first used exploratory tables, histograms, and bar charts to understand the overall state of subway lateness and the patterns within our predictors, as well as a correlation matrix to see how our predictors relate. We then fit a logistic model that centered average age around the mean and included its square, and also centered income around its mean and included its interaction with non-white proportion. We consider these new variables as well as the ones listed above, except for age range, which was excluded to reduce model complexity and multicollinearity with vehicle count. We use a significance threshold of $\alpha = 0.05$ and report $95\%$ confidence intervals for estimated coefficients.
+
+# Results
+
+```{r}
+#################################### Set-up #################################### 
+
+# Load libraries
+library(tidyverse)
+library(stargazer)
+library(tinytex)
+library(vtable)
+```
+
+```{r}
+# Load data
+OTP <- read_csv("on_time_performance.csv")
+```
+
+```{r}
+# Select the most recent year, and drop yearly variables
+## Analysis takes too much time and storage space for 2021-2024, so we only
+## consider 2024 (the earlier years are too close to COVID)
+OTP <- OTP %>% filter(year == 2024) %>% select (!yearly_total_ridership & !yearly_adopt_budget)
+```
+
+```{r}
+##################################### EDA #####################################
+
+################################ Univariate EDA ################################
+
+# On-time/Off-time proportion
+table(OTP$ind_off_time)
+prop.table(table(OTP$ind_off_time))
+
+## In 2024, among the trains considered, 1939845 arrivals were on-time and 484355 were off-time; 80.02% were on-time and 19.98% were off-time
+```
+
+```{r}
+# Bar plot of overall on-time vs. off-time
+OTP <- OTP %>%
+  mutate(punctuality = ifelse(ind_off_time == 0, "On-time", "Off-time"))
+
+ggplot(OTP, aes(x = punctuality)) +
+  geom_bar() +
+  labs(
+    x = "Train Status",
+    y = "Number of Observations",
+    title = "Overall On-Time vs. Off-Time Trains"
+  )
+```
+
+```{r}
+# Look at numeric predictors
+## Check summaries
+summary(OTP$count_roll_stock)
+summary(OTP$avg_roll_age)
+summary(OTP$range_roll_age)
+summary(OTP$avg_max_extent)
+summary(OTP$SWA_inc)
+summary(OTP$SWA_race)
+
+## Check histograms
+hist(OTP$avg_roll_age, freq = FALSE)
+hist(OTP$range_roll_age, freq = FALSE)
+hist(OTP$avg_max_extent, freq = FALSE)
+hist(OTP$SWA_inc, freq = FALSE)
+hist(OTP$SWA_race, freq = FALSE)
+```
+
+Table 1 gives summary statistics on vehicle count and the data's continuous predictors. Most train lines use just $1$ kind of vehicle. $53.584\%$ of train lines use just one kind of, while $33.5641\%$ and $12.8519\%$ of lines use two and three kinds of vehicles respectively. Some lines had very young vehicles, while others had very old vehicles: the minimum average was $0.5$ years, and the maximum was $38$ years. The median vehicle age was $14.5$ years. Average income's minimum and maximum values were $68.86$ and $101.6$ thousands of dollars, with a median value of $89.11$ thousands of dollars. The average non-white proportion across all lines was $0.6331$. Approximately $77.6457%$ of observations (late or otherwise) took place on a weekday. Some of these predictors were moderately correlated. In particular, average income and non-white proportion had a correlation of approximately $-0.6837$, the number of distinct locomotives used and age range had a correlation of $0.6024$, and average age and route length had a correlation of $0.1434$.
+
+```{r, results='asis'}
+#| include: TRUE
+
+# Render summary stats table
+table.summary <- OTP %>% st(out = "latex",
+                            fit.page = "1\\textwidth", 
+                            summ = c('min(x)',
+                                     'pctile(x)[25]',
+                                     "median(x)",
+                                     'mean(x)',
+                                     'pctile(x)[75]',
+                                     'max(x)',
+                                     "sd(x)"),
+                            summ.names = c("Minimum",
+                                           "25th Pctl.",
+                                           "Median",
+                                           "Mean",
+                                           "75th Pctl.",
+                                           "Maximum",
+                                           "SD"),
+                            vars = c("count_roll_stock",
+                                     "avg_roll_age",
+                                     "range_roll_age",
+                                     "avg_max_extent",
+                                     "SWA_inc",
+                                     "SWA_race"),
+                            labels = c("Vehicle Count",
+                                       "Average Age",
+                                       "Age Range",
+                                       "Average Length",
+                                       "Average Income",
+                                       "Average Non-white Proportion"),
+                            title = "Summary Statistics on MTA Subway Characteristics (N = 2424200)",
+                            digits = 4)
+```
+
+```{r}
+# Categorical variables
+table(OTP$line)
+table(OTP$ind_weekend)
+table(OTP$count_roll_stock) / 2424200
+```
+
+```{r}
+################################ Bivariate EDA ################################
+
+# On-time proportion by line
+## Make bargraph
+OTP %>%
+  group_by(line) %>%
+  dplyr::summarize(prop_off_time = mean(ind_off_time == 1, na.rm = TRUE)) %>%
+  ggplot(aes(x = reorder(line, prop_off_time), y = prop_off_time, fill = line)) +
+  geom_col() + 
+  scale_fill_manual("Primary Trunk Line",
+                    values = c("A" = "#0062CF",
+                               "C" = "#0062CF",
+                               "E" = "#0062CF",
+                               "B" = "#EB6800",
+                               "D" = "#EB6800",
+                               "F" = "#EB6800",
+                               "M" = "#EB6800",
+                               "G" = "#799534",
+                               "JZ" = "#8E5C33",
+                               "L" = "#7C858C",
+                               "N" = "#F6BC26",
+                               "Q" = "#F6BC26",
+                               "R" = "#F6BC26",
+                               "W" = "#F6BC26",
+                               "1" = "#D82233",
+                               "2" = "#D82233",
+                               "3" = "#D82233",
+                               "4" = "#009952",
+                               "5" = "#009952",
+                               "6" = "#009952",
+                               "7" = "#9A38A1")) +
+  coord_flip() +
+  labs(
+    x = "Subway Line",
+    y = "Proportion Off-Time",
+    title = "Proportion of Off-Time Trains by Subway Line"
+  )
+
+## Get statistics
+
+OTP %>%
+  group_by(line) %>%
+  dplyr::summarize(prop_off_time = mean(ind_off_time == 1, na.rm = TRUE)) %>% 
+  summary(prop_off_time, digits = 7)
+```
+
+The figure describes the observed proportion of late arrivals by subway line, colored according to the Manhattan main line they run on. The B train service had the greatest proportion of late arrivals, with $35.7876\%$ of scheduled arrivals being late. The L train service had the lowest proportion of late arrivals, with only $8.1179\%$ of arrivals being late. The mean proportion of late arrivals across all the lines considered was $21.1619\%$, while the first and second quartiles were $17.1308\%$ and $25.6939\%$ respectively.
+
+```{r, results='asis', fig.width = 5, fig.height = 3}
+#| include: TRUE
+#| fig-align: center
+
+# Render bar chart
+OTP %>%
+  group_by(line) %>%
+  dplyr::summarize(prop_off_time = mean(ind_off_time == 1, na.rm = TRUE)) %>%
+  ggplot(aes(x = reorder(line, prop_off_time), y = prop_off_time, fill = line)) +
+  geom_col() + 
+  scale_fill_manual("Primary Trunk Line",
+                    values = c("A" = "#0062CF",
+                               "C" = "#0062CF",
+                               "E" = "#0062CF",
+                               "B" = "#EB6800",
+                               "D" = "#EB6800",
+                               "F" = "#EB6800",
+                               "M" = "#EB6800",
+                               "G" = "#799534",
+                               "JZ" = "#8E5C33",
+                               "L" = "#7C858C",
+                               "N" = "#F6BC26",
+                               "Q" = "#F6BC26",
+                               "R" = "#F6BC26",
+                               "1" = "#D82233",
+                               "2" = "#D82233",
+                               "3" = "#D82233",
+                               "4" = "#009952",
+                               "5" = "#009952",
+                               "6" = "#009952",
+                               "7" = "#9A38A1"),
+                    breaks = c("A", "B", "G", "JZ", "L", "N", "1", "4", "7"),
+                    labels = c("A/C/E", 
+                               "B/D/F/M", 
+                               "G", 
+                               "JZ", 
+                               "L", 
+                               "N/Q/R", 
+                               "1/2/3", 
+                               "4/5/6", 
+                               "7")) + 
+  theme(text = element_text(family = "serif")) +
+  theme(legend.text = element_text(family = "sans")) +
+  coord_flip() +
+  labs(
+    x = "Subway Line",
+    y = "Proportion of Arrivals that Were Off-Time",
+    title = "Figure. Proportion of Off-Time Trains by Subway Line"
+  )
+```
+
+```{r}
+# On-time proportion by weekend/weekday
+
+OTP <- OTP %>%
+  mutate(day_type = ifelse(ind_weekend == 1, "Weekend", "Weekday"))
+
+on_time_by_day <- OTP %>%
+  group_by(day_type) %>%
+  dplyr::summarize(
+    prop_on_time = mean(ind_off_time == 0, na.rm = TRUE),
+    n = n()
+  )
+
+ggplot(on_time_by_day, aes(x = day_type, y = prop_on_time)) +
+  geom_col() +
+  labs(
+    x = "Day Type",
+    y = "Proportion On-Time",
+    title = "Proportion of On-Time Trains by Weekday/Weekend"
+  )
+
+## Train punctuality doesn't seem to differ strongly by weekend status, but 
+## regression will tell us for sure
+```
+
+```{r}
+# Check for correlation between predictors
+cor(OTP[sapply(OTP, is.numeric)])
+
+## Most of our predictors seem to not be correlated, but a few stand out. 
+## Trains with a greater number of distinct vehicles also have a higher range 
+## in vehicle age, and serve whiter neighborhoods. Income and non-whiteness are
+## also negatively correlated
+```
+
+```{r}
+############################# Fitting first models #############################
+
+# Fit reduced model w/ no demographic predictors
+## The plan will be to fit some models that include or exclude certain variables,
+## and then assess assumptions after and transform accordingly after. We check
+## significance with ANOVA
+fit_reduced <- glm(ind_off_time ~ factor(ind_weekend) + 
+                                  factor(count_roll_stock) + 
+                                  avg_roll_age + 
+                                  range_roll_age +
+                                  avg_max_extent,
+                data = OTP,
+                family = binomial
+)
+
+# Fit full model
+fit_logit <- glm(ind_off_time ~ factor(ind_weekend) + 
+                                factor(count_roll_stock) + 
+                                avg_roll_age + 
+                                range_roll_age +
+                                avg_max_extent +
+                                SWA_inc +
+                                SWA_race,
+                data = OTP,
+                family = binomial
+)
+
+# Inspect models
+summary(fit_logit)
+summary(fit_reduced)
+```
+
+```{r}
+# Check significance
+anova(fit_reduced, fit_logit, test = "Chisq")
+
+## Income and race are statistically significant / non-zero, so including them
+## in the final model seems like a good idea -- which of them we include and how
+## they are coded will probably be different, depending on the logit plots
+```
+
+```{r}
+############################ Empirical logit plots ############################
+
+# Empirical logit plot for train count
+logit.roll.count <- OTP %>%
+  mutate(countCat = cut(count_roll_stock, breaks = length(unique(count_roll_stock)), include.lowest = TRUE)) %>%
+  group_by(countCat) %>%
+  reframe(
+    phat = mean(ind_off_time, na.rm = TRUE),
+    countCat = countCat
+  ) %>%
+  distinct() %>%
+  mutate(logodds = log(phat / (1 - phat)))
+
+logit.roll.count %>%
+  ggplot(aes(x = countCat, y = logodds)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Log Odds of Off-Time Trains vs. Train Count",
+    y = "Log Odds of Off-Time",
+    x = "Route Length Decile"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+## There seems to be a non-linear relationship between the log odds of lateness 
+## and the number of vehicles used, so including it as a factor seems fair
+```
+
+```{r}
+## Empirical logit plot for average rolling stock age
+age.quants <- unique(quantile(OTP$avg_roll_age, probs = seq(0, 1, 0.10), na.rm = TRUE))
+
+logit.roll.age <- OTP %>%
+  mutate(ageCat = cut(avg_roll_age, breaks = age.quants, include.lowest = TRUE)) %>%
+  group_by(ageCat) %>%
+  reframe(
+    phat = mean(ind_off_time, na.rm = TRUE),
+    ageCat = ageCat, 
+    avg_roll_age = avg_roll_age
+  ) %>%
+  distinct() %>%
+  mutate(logodds = log(phat / (1 - phat)))
+
+logit.roll.age %>%
+  ggplot(aes(x = avg_roll_age, y = logodds)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Log Odds of Off-Time Trains vs. Average Rolling Stock Age",
+    y = "Log Odds of Off-Time",
+    x = "Average Rolling Stock Age Decile"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+## There seems to be a non-linear relationship between the log odds of lateness 
+## and the average train age, so squaring it in the regression is justified
+```
+
+```{r}
+# Empirical logit plot for range rolling stock age
+range.quants <- unique(quantile(OTP$range_roll_age, probs = seq(0, 1, 0.10), na.rm = TRUE))
+
+logit.roll.range <- OTP %>%
+  mutate(rangeCat = cut(range_roll_age, breaks = range.quants, include.lowest = TRUE)) %>%
+  group_by(rangeCat) %>%
+  reframe(
+    phat = mean(ind_off_time, na.rm = TRUE),
+    rangeCat = rangeCat,
+    range_roll_age = range_roll_age
+  ) %>%
+  distinct() %>%
+  mutate(logodds = log(phat / (1 - phat)))
+
+logit.roll.range %>%
+  ggplot(aes(x = range_roll_age, y = logodds)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Log Odds of Off-Time Trains vs. Range Rolling Stock Age",
+    y = "Log Odds of Off-Time",
+    x = "Average Rolling Stock Age"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+## There aren't that many distinct values for the range, and the relationship
+## between log odds and age range doesn't seem easily captured by transforms --
+## it might be best to leave it out of the model entirely, esp. if what we want
+## to capture (train heterogeneity) is captured well enough by other predictors
+## like the average age
+```
+
+```{r}
+# Empirical logit plot for average route length
+length.quants <- quantile(OTP$avg_max_extent, probs = seq(0, 1, 0.10), na.rm = TRUE)
+
+logit.route.length <- OTP %>%
+  mutate(lengthCat = cut(avg_max_extent, breaks = length.quants, include.lowest = TRUE)) %>%
+  group_by(lengthCat) %>%
+  reframe(
+    phat = mean(ind_off_time, na.rm = TRUE),
+    lengthCat = lengthCat,
+    avg_max_extent = avg_max_extent
+  ) %>%
+  distinct() %>%
+  mutate(logodds = log(phat / (1 - phat)))
+
+logit.route.length %>%
+  ggplot(aes(x = lengthCat, y = logodds)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Log Odds of Off-Time Trains vs. Route Length Decile",
+    y = "Log Odds of Off-Time",
+    x = "Route Length Decile"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+## Relationship between route length and lateness seems linear
+```
+
+```{r}
+# Empirical logit plot for station-weighted income
+income.quants <- quantile(OTP$SWA_inc, probs = seq(0, 1, 0.1), na.rm = TRUE)
+
+logit.income <- OTP %>%
+  mutate(incomeCat = cut(SWA_inc, breaks = income.quants, include.lowest = TRUE)) %>%
+  group_by(incomeCat) %>%
+  reframe(
+    phat = mean(ind_off_time, na.rm = TRUE),
+    incomeCat = incomeCat,
+    SWA_inc = SWA_inc
+  ) %>%
+  distinct() %>%
+  mutate(logodds = log(phat / (1 - phat)))
+
+logit.income %>%
+  ggplot(aes(x = SWA_inc, y = logodds)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Log Odds of Off-Time Trains vs. Station-Weighted Income",
+    y = "Log Odds of Off-Time",
+    x = "Station-Weighted Income"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+## It seems that the log odds follows a linear  relationship with income, but
+## there are some points that do not fit the trend -- it might be best to model
+## it linearly but check leverage after
+```
+
+```{r}
+# Empirical logit plot for station-weighted non-white proportion
+race.quants <- quantile(OTP$SWA_race, probs = seq(0, 1, 0.10), na.rm = TRUE)
+
+logit.race <- OTP %>%
+  mutate(raceCat = cut(SWA_race, breaks = race.quants, include.lowest = TRUE)) %>%
+  group_by(raceCat) %>%
+  reframe(
+    phat = mean(ind_off_time, na.rm = TRUE),
+    raceCat = raceCat,
+    SWA_race = SWA_race
+  ) %>%
+  distinct() %>%
+  mutate(logodds = log(phat / (1 - phat)))
+
+logit.race %>%
+  ggplot(aes(x = raceCat, y = logodds)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Log Odds of Off-Time Trains vs. Station-Weighted Non-White Proportion Decile",
+    y = "Log Odds of Off-Time",
+    x = "Station-Weighted Non-White Proportion Decile"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+## It seems that race doesn't follow a linear relationship with the log
+## odds, so categorizing it into quartiles might be a good idea here
+```
+
+```{r}
+# Put race into quartiles
+OTP <- OTP %>% mutate(race_quartile = ntile(SWA_race, 4))
+```
+
+```{r}
+# Empirical logit plot for station-weighted race quartiles
+logit.race.quint <- OTP %>%
+  mutate(raceCat = race_quartile) %>%
+  group_by(raceCat) %>%
+  reframe(
+    phat = mean(ind_off_time, na.rm = TRUE),
+    raceCat = raceCat,
+  ) %>%
+  distinct() %>%
+  mutate(logodds = log(phat / (1 - phat)))
+
+logit.race.quint %>%
+  ggplot(aes(x = raceCat, y = logodds)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Log Odds of Off-Time Trains vs. Station-Weighted Race quartile",
+    y = "Log Odds of Off-Time",
+    x = "Station-Weighted Race quartile"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+## Race quartile seems to follow a very non-linear relation with the log odds
+```
+
+```{r}
+############################# Fitting final model #############################
+
+# Make transformed variables
+OTP <- OTP %>% mutate(avg_age_cent = avg_roll_age - mean(avg_roll_age), 
+                      avg_age_cent_sq = avg_age_cent ^ 2,
+                      inc_cent = SWA_inc - mean(SWA_inc))
+```
+
+```{r}
+# Fit final model
+fit_final <- glm(ind_off_time ~ factor(ind_weekend) + 
+                                   factor(count_roll_stock) + 
+                                   avg_age_cent + 
+                                   avg_age_cent_sq + 
+                                   avg_max_extent +
+                                   inc_cent * factor(race_quartile),
+                data = OTP,
+                family = binomial
+)
+
+summary(fit_final)
+```
+
+Table 2 presents the estimated odds ratios, their associated confidence intervals, significance levels, and standard errors for the logistic regression model. We find that whether or not it is a weekend, the number of locomotives used by a line, the centered average and squared average age, average maximum route length, centered average income, and average race quartile are statistically significant predictors of the log odds of lateness. We also found statisically significant interaction effects between average income and race quartile.
+
+```{r, results='asis'}
+#| include: TRUE
+
+# Render table
+stargazer(fit_final, ci = TRUE, 
+                     type = "latex",
+                     intercept.bottom = FALSE,
+                     header = FALSE,
+                     suppress.errors = TRUE,
+                     title = "Logistic Regression Results on the Log Odds of Lateness",
+                     font.size = "scriptsize",
+                     report = "vc*s",
+                     dep.var.labels = "Odds Ratio",
+                     table.placement = "H",
+                     digits = 4,
+                     covariate.labels = c("Intercept",
+                                          "Weekend (Ref. = Weekday)",
+                                          "Two Locomotives Used (Ref. = One)",
+                                          "Three Locomotives Used (Ref. = One)",
+                                          "Centered Average Age",
+                                          "Squared Centered Average Age",
+                                          "Average Maximum Route Length",
+                                          "Centered Income",
+                                          "Second Race Quartile (Ref. = First)",
+                                          "Third Race Quartile (Ref. = First)",
+                                          "Fourth Race Quartile (Ref. = First)",
+                                          "Centered Income $\\times$ Second Race Quartile",
+                                          "Centered Income $\\times$ Third Race Quartile",
+                                          "Centered Income $\\times$ Fourth Race Quartile"),
+                     apply.coef = exp,
+                     notes = "95\\%CIs in parentheses"
+          )
+```
+
+The odds ratio of lateness for scheduled arrivals on the weekend vs. the weekday was $0.841$ $(\text{CI: } (0.8327, 0.8486))$, meaning that trains were less likely to be late on the weekend. Relative to subway lines that use only a single kind of locomotive, the odds ratios of lateness for lines that use two and three locomotives were $0.7649 \text{ (CI: }(0.7533, 0.7765))$ and $1.8568 \text{ (CI: }(1.8359, 1.8778))$ respectively. This means that lines that used two and three different kinds of trains were more and less likely to be late. The centered average age followed a quadratic relationship with lateness. The estimated odds ratio for the linear component was $0.9782 \text{ (CI: }(0.9774, 0.9790))$, while the estimate for the squared component was $1.0008 \text{ (CI: }(1.0007, 1.0008))$. Therefore, an increase in vehicle age by one year is initially associated with a decrease in the odds of lateness, but eventually is associated with an increase in the odds of lateness. An increase in the average maximum route length for a given line by one mile is associated with an increase in the odds of lateness by $1.0433 \text{ (CI: }(1.0423, 1.0443))$.
+
+The estimated coefficient for a line demographic's average income was $1.0578 \text{ (CI: }(1.0557, 1.0599))$, so an increase in a line's average income by $1{,}000$ is associated with an increase in the odds of lateness by $1.0578$. Compared to the first quartile for line average non-white proportion, the second, third, and fourth quartiles see higher odds of lateness. In particular, the largest coefficient was $1.6397 \text{ (CI: }(1.0764, 1.1198))$ for the third quartile, meaning that for those lines whose average ridership is between $63.28\%$ and $67.44\%$ non-white, the odds of lateness increases by $1.6397$. Finally, the odds of lateness for a unit increase in average income conditional on the non-white proportion quartile are lower for the second, third, and fourth quartile compared to the first quartile.
+
+# Discussion
+
+Some of the results are consistent with previous literature and our expectations derived from knowledge of the NYC subway system. Train service being less likely to be late on weekends may reflect that the subway sees less ridership on weekends, meaning trains stop for shorter amounts of times and see less wear-and-tear than on the weekday. The estimated effect of average route length likely reflects that longer subway lines have more opportunities to accumulate train failures or stoppages, increasing the chance that they are delayed. The estimated odds ratios for train count and average train age are not linear, which was not quite in line with the expectation that the odds of delay would be strictly increasing with both predictors. One possible explanation is that when new trains are first adopted, they face "teething issues" related to deployment hiccups or a lack of maintenance know-how -- but, as time passes, efficiency gains from improved vehicle technology appear and reduce the odds of delay, until eventually the trains wear down and the odds of delay increase again. The estimates for the coefficients of race quartile are also expected, owing to historical underinvestment in non-white neighborhoods and possibly higher political pressure to maintain service from whiter neighborhoods.
+
+The most surprising result was the relationship average income seems to have with the odds of lateness. We originally expected that lines serving higher-income neighborhoods with lower non-white proportions would have better service reliability. However, it appears that unit increases in income are positively associated with train delays, and that lines serving higher income and less white populations are more punctual. One possible mechanism is that some high-income, lower non-white areas include dense commercial districts such as Midtown and Downtown Manhattan. These areas may have extremely high passenger volume, crowded platforms, and longer boarding and exiting times, which could increase the likelihood of delays even if the neighborhoods are wealthier. Indeed, this finding points to a need for more granular data, both in time and neighborhoods. It also hints at a limitation of the paper, which is that some NYC neighborhoods which may be poor, non-white, or both lack any access to transit and do not appear in the data, causing our findings to not be fully representative of the subway's punctuality.
+
+# Conclusion
+
+This paper finds that NYC subway lateness is related to technical and demographic predictors in several key, though complex, ways. First, train lines that are longer are associated with higher odds of delay, while service on the weekend is associated with lower odds of delay. Vehicle heterogeneity (as measured by the number of distinct trains used, and average train age) follows a quadratic relationship with the odds of lateness, decreasing at first as new technologies are integrated into the system and increasing later as maintenance costs rise. Importantly, increases in a line's average income and non-whiteness are associated with less punctual service. However, the effect of income on lateness changes when conditioning on different levels of non-whiteness, further suggesting that subway service lateness is highly variable for different demographics. Overall, the findings of the paper suggest that improving technology may help improve subway service (within limits), and that New York City's communities face considerable inequities in subway punctuality.
+
+\begin{thebibliography}{10}
+    \bibitem{subway_ridership} Metropolitan Transportation Authority. “Subway and Bus Ridership for 2024.” MTA, 2024, www.mta.info/agency/new-york-city-transit/subway-bus-ridership-2024.
+    \bibitem{human_cost} New York City Comptroller. The Human Cost of Subway Delays: A Survey of New York City Riders. July 2017.
+    \bibitem{bus_paper} Paudel, Jayash. “Bus Ridership and Service Reliability: The Case of Public Transportation in Western Massachusetts.” Transport Policy, vol. 100, Oct. 2020, pp. 98–107.
+    \bibitem{french_paper} Fabre, Nicolas, et al. “Rolling Stock Management and Railway Efficiency: Evidence from a Line-Level Analysis of Regional Rail Services in France.” Journal of Rail Transport Planning \& Management, vol. 38, Mar. 2026, p. 100579.
+    \bibitem{spatial_paper} Baghestani, Amirhossein , et al. “Assessing Spatial and Racial Equity of Subway Accessibility: Case Study of New York City.” Cities, vol. 155, 14 Oct. 2024, pp. 105489–105489.
+\end{thebibliography}

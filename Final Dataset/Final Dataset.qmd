@@ -1,0 +1,196 @@
+---
+title: "Final Dataset"
+format: pdf
+editor: visual
+---
+
+## Set-up
+
+```{r}
+# Load libraries
+library(tidyverse)
+```
+
+```{r}
+# Load data
+
+## Load data for outcome variable (on-time performance, or OTP)
+OTP <- read_csv("MTA_Subway_Terminal_On-Time_Performance__Beginning_2015_20260415.csv")
+
+## Load data for predictors
+
+### Technical predictors
+ridership <- read_csv("MTA_Daily_Ridership_and_Traffic__Beginning_2020_20260415.csv")
+funding <- read_csv("MTA_Statement_of_Operations__Beginning_2019_20260415.csv")
+roll <- read_csv("nyc_mta_rolling_stock.csv")
+lengths <- read_csv("nyc_mta_line_lengths.csv")
+
+### Demographic predictors
+income <- read_csv("nyc_boros_income.csv")
+race <- read_csv("nyc_boros_race.csv")
+stations <- read_csv("nyc_mta_station_count.csv")
+```
+
+## Final dataset
+
+### Data prep
+
+```{r}
+# Drop unnecessary rows from each dataset 
+
+## Drop rows from OTP dataset
+OTP <- OTP %>% filter(between(month, as.Date("2021-01-01"), as.Date("2024-12-31"))) %>% 
+  filter(line != "S Fkln") %>% # drop shuttle service 
+  filter(line != "S Rock") %>% # drop shuttle service
+  filter(line != "S 42nd") %>% # drop shuttle service
+  filter(line != "GS") %>% # drop shuttle service
+  filter(line != "FS") %>% # drop shuttle service
+  filter(line != "H") # drop shuttle service
+
+## Drop rows from ridership dataset
+ridership <- ridership %>% filter(between(mdy(Date), as.Date("2021-01-01"), as.Date("2024-12-31"))) %>% 
+  filter(Mode == "Subway")
+
+## Drop rows from funding dataset
+funding <- funding %>% filter(between(Month, as.Date("2021-01-01"), as.Date("2024-12-31"))) %>%
+  filter(Scenario == "Adopted Budget", Agency == "NYCT") %>%
+  filter(str_detect(Type, "expense") | str_detect(Type, "Expense"))
+```
+
+```{r}
+# Drop unnecessary columns from each dataset
+
+## Drop columns from OTP dataset
+OTP <- OTP %>% select(month, line, day_type, num_on_time_trips, num_sched_trips)
+
+## Drop columns from ridership dataset
+ridership <- ridership %>% select(Date, Count) # We know it's all subway data anyways
+
+## Drop columns from funding dataset
+funding <- funding %>% select(Month, Amount) # We will be summing across every month in a year
+
+## Drop columns from rolling stock dataset
+roll <- roll %>% select(line, count_roll_stock, avg_roll_age, range_roll_age)
+
+## Drop notes column from length dataset
+lengths <- lengths %>% select(!limited_service)
+```
+
+```{r}
+# Add / alter values and variables
+
+## Change "J" label to "JZ" in OTP data
+### The JZ observations have a gap between Dec. 2019 and Sept. 2024. The missing
+### observations for these times actually are filed under the J line instead for
+### technical reasons -- since the J and Z have the same route, we treat them as
+### one line to get a continuous string of values from 2021 - 2024
+OTP$line[OTP$line == "J"] <- "JZ" 
+## Reformat day_type to take the values 0 and 1; 0 means weekday, 1 means weekend
+OTP$day_type[OTP$day_type == "1"] <- 0
+OTP$day_type[OTP$day_type == "2"] <- 1
+## Add late trips column
+OTP <- OTP %>% mutate(num_off_time_trips = num_sched_trips - num_on_time_trips)
+### We will need to use these values to assemble our rows later
+
+## Sum ridership values to get yearly totals
+ridership <- ridership %>% group_by(year = year(mdy(Date))) %>% summarize(Count = sum(Count))
+## Adjust units (from ones to ten-thousands)
+ridership$Count <- ridership$Count / 10000
+
+## Sum expenses to get NYCT's yearly adopted budget
+funding <- funding %>% group_by(year = year(Month)) %>% summarize(Amount = sum(Amount))
+## Adjust units (from ones to millions)
+funding$Amount <- funding$Amount / 1000000
+
+## Find average lengths (maximum extents, from start to end) for each line
+lengths <- lengths %>% group_by(line = line) %>% summarize(length_miles = mean(length_miles))
+
+## Get proportions of stations in each borough for each line
+stations <- stations %>% mutate(prop_stations_bx = count_station_bx / total_stations,
+                                prop_stations_b = count_station_b / total_stations,
+                                prop_stations_m = count_station_m / total_stations,
+                                prop_stations_q = count_station_q / total_stations)
+## Drop count columns
+stations <- stations %>% select(line, prop_stations_bx, prop_stations_b, prop_stations_m, prop_stations_q)
+```
+
+```{r}
+# Compute new metrics
+
+## Our borough level statistics do not capture a lot of neighborhood-level
+## variation for our lines, which usually pass through multiple boroughs -- to 
+## get around this, we compute a certain weighted average to get at the typical
+## demographic that a line serves. The formula we use for a given line,
+## for the variables income and pct. non-white is:
+  ## \text{station weighted avg statistic}_{line} = \sum_i (\text{proportion of stations for 
+  ## $line$ in borough}_i \times \text{yearly statistic in borough}_i )
+## so, we compute the average income or percent non-white for a line, weighted
+## by the number of stations it serves in each borough
+
+## Compute income station-weighted average (SWA)
+SWA_income <- stations %>% cross_join(income) %>% ## Makes combinations for mutate
+  mutate(swa_inc = prop_stations_bx * med_inc_bx + ## Compute weighted avg
+           prop_stations_b * med_inc_b + 
+           prop_stations_m * med_inc_m + 
+           prop_stations_q * med_inc_q) %>% 
+  mutate(swa_inc = swa_inc / 1000) %>% # Change units of income to thousands
+  select(line, year, swa_inc)
+
+## Compute race SWA
+SWA_race <- stations %>% cross_join(race) %>% ## Makes combinations for mutate
+  mutate(swa_race = prop_stations_bx * pct_nonwhite_bx + ## Compute weighted avg
+           prop_stations_b * pct_nonwhite_b + 
+           prop_stations_m * pct_nonwhite_m + 
+           prop_stations_q * pct_nonwhite_q) %>% 
+  select(line, year, swa_race)
+```
+
+### Joining tables
+
+```{r}
+# Convert monthly OTP observations into yearly summed observations for each line
+OTP <- OTP %>% mutate(year = year(month)) %>% 
+  group_by(year, line, day_type) %>% 
+  summarise(yearly_on_time = sum(num_on_time_trips), 
+            yearly_off_time = sum(num_off_time_trips))
+```
+
+```{r}
+# Final join, on year and line
+OTP <- OTP %>% 
+  left_join(ridership) %>% ## Yearly total ridership, in tens of thousands
+  left_join(funding) %>% ## Yearly NYCT adopted budget, in millions
+  left_join(roll) %>% ## Rolling stock diversity and age
+  left_join(lengths) %>% ## Average maximum extents of each line
+  left_join(SWA_income) %>% ## SWA of income for each line and year
+  left_join(SWA_race) ## SWA of race for each line and year
+
+# Adjust rolling stock average ages to change with the year
+OTP <- OTP %>% mutate(avg_roll_age = year - avg_roll_age)
+```
+
+```{r}
+# Turn counts into individual rows for logistic regression
+OTP <- OTP %>% rowwise() %>% ## Group input by rows
+  mutate(off_time = list(c(rep(0, yearly_on_time), ## Replicate on-time obs. as 0
+                           rep(1, yearly_off_time)))) %>% ## Replicate late obs. as 1
+  unnest(off_time) ## unnest() turns each cell (which contains lists) into individual rows
+```
+
+```{r}
+# Drop old count columns
+OTP <- OTP %>% select(!yearly_on_time) %>% select(!yearly_off_time)
+
+# Rename columns
+OTP <- OTP %>% rename(ind_weekend = day_type,
+                      yearly_total_ridership = Count,
+                      yearly_adopt_budget = Amount,
+                      avg_max_extent = length_miles,
+                      SWA_inc = swa_inc,
+                      SWA_race = swa_race,
+                      ind_off_time = off_time)
+```
+
+```{r}
+write_csv(OTP, "on_time_performance.csv")
+```
